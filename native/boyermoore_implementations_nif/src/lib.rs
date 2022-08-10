@@ -1,10 +1,17 @@
 use std::collections::HashMap;
 
 use rustler::{Env, NifStruct, ResourceArc};
+
+// Sorting/spacing around imports is varied, but my personal way, with a lineskip between each:
+// 1. Core, Alloc, Std
+// 2. Imported crates
+// 3. Module declarations
+// 4. Same-crate imports
+
 #[derive(NifStruct)]
 #[module = "BoyerMoore.Implemenations.Nif.BadMatchTable"]
 struct BadMatchTable {
-    mapping: HashMap<u8, usize>,
+    mapping: HashMap<u8, usize>, // Try a BTreeMap? Might be better perf
     size: usize,
 }
 
@@ -12,7 +19,7 @@ struct BadMatchTable {
 #[module = "BoyerMoore.Implemenations.Nif.Pattern"]
 struct Pattern {
     match_table: BadMatchTable,
-    pattern_chars: Vec<u8>,
+    pattern_chars: Vec<u8>, // Semantic: you're not using `char`s, naming is a misnomer
     size: usize,
 }
 
@@ -23,6 +30,8 @@ impl BadMatchTable {
 
         for (i, c) in pattern.bytes().enumerate() {
             let skip = pattern_length - i - 1;
+            // I personally recommend a new line on either side of an if chain, unless it's at the start/end
+            // of the parent block.
             if i == pattern_length - 1 && !skip_mappings.contains_key(&c) {
                 skip_mappings.insert(c, pattern_length);
             } else if skip <= 0 {
@@ -32,25 +41,30 @@ impl BadMatchTable {
             }
         }
 
-        BadMatchTable {
+        BadMatchTable { // You can use Self here too, matter of preference
             mapping: skip_mappings,
             size: pattern_length,
         }
     }
 
     fn get(&self, c: u8) -> usize {
+        // Alternatively:
+        // *self.mapping.get(&c).unwrap_or(&self.size)
+
         match self.mapping.get(&c) {
-            Some(value) => value.to_owned(),
+            Some(value) => *value, // Dereference and it will copy the value, more idiomatic
             None => self.size,
         }
     }
 }
 
-impl<'a> Pattern {
+impl<'a> Pattern { // This lifetime can be removed, as well as below.
     fn compile(pattern: &'a str) -> Self {
         Pattern {
             match_table: BadMatchTable::new(pattern),
             size: pattern.len(),
+            // Alternatively:
+            // pattern_chars: pattern.as_bytes().to_owned(),
             pattern_chars: pattern.bytes().collect::<Vec<_>>(),
         }
     }
@@ -60,6 +74,10 @@ impl<'a> Pattern {
     }
 
     fn at(&'a self, i: usize) -> u8 {
+        // I'd make this function return an Option and move the unwrap to
+        // where it's proven to be a safe assumption. In terms of contracts,
+        // there is an implicit contract here that the caller has done the
+        // check. It may result in more unwraps, but it's easier to audit.
         *self.pattern_chars.get(i).unwrap()
     }
 }
@@ -87,25 +105,22 @@ fn compile(pattern: &str) -> ResourceArc<Pattern> {
 
 fn do_contains(haystack: &str, needle: &Pattern) -> bool {
     let starting_index = needle.size - 1;
-    let haystack_chars = haystack.bytes().collect::<Vec<_>>();
+    let haystack_chars = haystack.bytes().collect::<Vec<_>>(); // Again, as_bytes
+    // Again, may be more personal preference than consensus, but I also put a newline
+    // after "prep work" and the rest of a function, even if it's just one line
     contains_pattern(&haystack_chars, needle, starting_index)
 }
 
 fn contains_pattern(haystack: &Vec<u8>, pattern: &Pattern, starting_index: usize) -> bool {
     match detect_pattern(haystack, pattern, starting_index, pattern.size - 1) {
         Ok(_) => true,
-        Err(skip) => {
-            let new_start = skip + starting_index;
-            if new_start >= haystack.len() {
-                false
-            } else {
-                contains_pattern(haystack, pattern, skip + starting_index)
-            }
-        }
+        Err(skip) if skip + starting_index >= haystack.len() => false,
+        Err(skip) =>
+            contains_pattern(haystack, pattern, skip + starting_index),
     }
 }
 
-fn detect_pattern<'a>(
+fn detect_pattern<'a>( // Can get rid of this lifetime as well
     haystack: &Vec<u8>,
     pattern: &Pattern,
     corpus_index: usize,
